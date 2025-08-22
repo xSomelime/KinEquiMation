@@ -2,6 +2,12 @@ venv
 env
 .venv
 .env
+.png
+png
+.json
+json
+/data
+
 __pycache__/
 *.pyc
 *.pyo
@@ -11,3 +17,4 @@ __pycache__/
 *.pth
 *.db
 .DS_Store
+
