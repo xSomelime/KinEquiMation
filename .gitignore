@@ -1,5 +1,6 @@
 venv
 env
+assets/*.blend
 .venv
 .env
 .png
