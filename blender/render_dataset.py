@@ -16,6 +16,8 @@ def get_args():
     p.add_argument("--cameras", type=int, default=12)
     p.add_argument("--cam_radius", type=float, default=0.0, help="0 = auto från bones")
     p.add_argument("--cam_height", type=float, default=1.6)
+    p.add_argument("--single_frame", action="store_true",
+               help="Rendera endast en frame per action (alla kameror)")
     p.add_argument("--root_bone", default="root")
     p.add_argument("--bone_prefix", default="DEF-")
     p.add_argument("--axis_scale", type=float, default=0.25)
@@ -238,45 +240,56 @@ for act_name in actions:
     tgt=bpy.data.objects.new(f"{act_name}_Target",None)
     bpy.context.collection.objects.link(tgt); tgt.location=center
 
-    # cameras
+    # cameras 
     cameras=[]
-    for i in range(args.cameras):
-        ang=(2*math.pi)*i/args.cameras
-        x=center.x+radius*math.cos(ang)
-        y=center.y+radius*math.sin(ang)
-        cam_data=bpy.data.cameras.new(f"{act_name}_Cam_{i:02d}")
-        cam_data.clip_start=0.01; cam_data.clip_end=2000.0; cam_data.lens=50.0
-        cam_obj=bpy.data.objects.new(f"{act_name}_Cam_{i:02d}",cam_data)
-        bpy.context.collection.objects.link(cam_obj)
-        cam_obj.location=(x,y,cam_z)
-        con=cam_obj.constraints.new(type='TRACK_TO'); con.target=tgt
-        con.track_axis='TRACK_NEGATIVE_Z'; con.up_axis='UP_Y'
-        cameras.append(cam_obj)
+    cam_index = 0
+    heights = [cam_z, cam_z + radius*0.5, cam_z + radius]  # tre nivåer: normal, lite högre, ovanifrån
+    for h in heights:
+        for i in range(args.cameras):
+            ang = (2*math.pi)*i/args.cameras
+            x = center.x + radius*math.cos(ang)
+            y = center.y + radius*math.sin(ang)
+            cam_data = bpy.data.cameras.new(f"{act_name}_Cam_{cam_index:02d}")
+            cam_data.clip_start = 0.01; cam_data.clip_end = 2000.0; cam_data.lens = 50.0
+            cam_obj = bpy.data.objects.new(f"{act_name}_Cam_{cam_index:02d}", cam_data)
+            bpy.context.collection.objects.link(cam_obj)
+            cam_obj.location = (x, y, h)
+            con = cam_obj.constraints.new(type='TRACK_TO'); con.target = tgt
+            con.track_axis = 'TRACK_NEGATIVE_Z'; con.up_axis = 'UP_Y'
+            cameras.append(cam_obj)
+            cam_index += 1
 
-    print(f"[render_dataset] {act_name}: center={tuple(round(v,3) for v in center)}, "
-          f"radius={round(radius,3)}, cam_z={round(cam_z,3)}, cams={len(cameras)}")
 
     # frames
-    for frame in range(f_start,f_end+1):
+    if args.single_frame:
+        frame_range = [f_start]   # bara första framen
+    else:
+        frame_range = range(f_start, f_end+1)
+
+    for frame in frame_range:
         scene.frame_set(frame)
         for ci,cam in enumerate(cameras):
-            scene.camera=cam
-            intr=get_intrinsics(scene,cam)
-            cam_mw=cam.matrix_world
-            cam_extr={"matrix_world":[[float(v) for v in row] for row in cam_mw]}
+            scene.camera = cam
+            intr = get_intrinsics(scene,cam)
+            cam_mw = cam.matrix_world
+            cam_extr = {"matrix_world":[[float(v) for v in row] for row in cam_mw]}
             # baseline payload
-            bones_payload={}
+            bones_payload = {}
             for bname in export_bone_names:
-                pb=arm.pose.bones.get(bname)
+                pb = arm.pose.bones.get(bname)
                 if not pb: continue
-                head_w=bone_world_head(arm,pb); tail_w=bone_world_tail(arm,pb)
-                uv_h,_,in_h,depth_h=project_point(scene,cam,head_w)
-                uv_t,_,in_t,depth_t=project_point(scene,cam,tail_w)
-                bones_payload[bname]={"parent":pb.parent.name if pb.parent else None,
-                                      "uv":[uv_h[0],uv_h[1]],"in_frame":in_h,
-                                      "uv_tail":[uv_t[0],uv_t[1]],"in_frame_tail":in_t,
-                                      "depth_cam":depth_h}
-            base_name=f"f{frame:05d}_c{ci:02d}"
+                head_w = bone_world_head(arm,pb); tail_w = bone_world_tail(arm,pb)
+                uv_h,_,in_h,depth_h = project_point(scene,cam,head_w)
+                uv_t,_,in_t,depth_t = project_point(scene,cam,tail_w)
+                bones_payload[bname] = {
+                    "parent": pb.parent.name if pb.parent else None,
+                    "uv": [uv_h[0], uv_h[1]],
+                    "in_frame": in_h,
+                    "uv_tail": [uv_t[0], uv_t[1]],
+                    "in_frame_tail": in_t,
+                    "depth_cam": depth_h
+                }
+            base_name = f"f{frame:05d}_c{ci:02d}"
             # render for each variant
             for variant in variants:
                 if variant == "flat":
@@ -290,11 +303,18 @@ for act_name in actions:
                 bpy.ops.render.render(write_still=True)
 
             # write json once
-            json_path=os.path.join(labels_dir,base_name+".json")
-            payload={"action":act_name,"frame":frame,
-                     "image_size":[scene.render.resolution_x,scene.render.resolution_y],
-                     "camera":cam.name,"camera_intrinsics":intr,"camera_extrinsics":cam_extr,
-                     "armature":arm.name,"bones":bones_payload}
-            with open(json_path,"w",encoding="utf-8") as f: json.dump(payload,f,ensure_ascii=False,indent=2)
+            json_path = os.path.join(labels_dir, base_name + ".json")
+            payload = {
+                "action": act_name,
+                "frame": frame,
+                "image_size": [scene.render.resolution_x, scene.render.resolution_y],
+                "camera": cam.name,
+                "camera_intrinsics": intr,
+                "camera_extrinsics": cam_extr,
+                "armature": arm.name,
+                "bones": bones_payload
+            }
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
 
-print(f"[render_dataset] Klart! Dataset till: {args.outdir}")
+    print(f"[render_dataset] Klart! Dataset till: {args.outdir}")
