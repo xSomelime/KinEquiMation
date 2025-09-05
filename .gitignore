@@ -5,6 +5,7 @@ assets/*.blend
 .env
 .png
 png
+outputs
 .json
 json
 /data
