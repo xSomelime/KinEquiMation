@@ -134,7 +134,6 @@ for o in bpy.data.objects:
 print(f"[render_dataset] Aktiva meshar: {dataset_meshes}")
 
 # ---------- Original materials ----------
-
 original_materials = {
     name: [m for m in (bpy.data.objects[name].data.materials[:] if bpy.data.objects.get(name) else [])]
     for name in dataset_meshes
@@ -147,7 +146,6 @@ def restore_materials():
         o.data.materials.clear()
         for m in mats:
             o.data.materials.append(m)
-
 
 # ---------- Flat material ----------
 def make_flat_material():
@@ -259,7 +257,6 @@ for act_name in actions:
             cameras.append(cam_obj)
             cam_index += 1
 
-
     # frames
     if args.single_frame:
         frame_range = [f_start]   # bara första framen
@@ -281,14 +278,31 @@ for act_name in actions:
                 head_w = bone_world_head(arm,pb); tail_w = bone_world_tail(arm,pb)
                 uv_h,_,in_h,depth_h = project_point(scene,cam,head_w)
                 uv_t,_,in_t,depth_t = project_point(scene,cam,tail_w)
+
+                # 3D coords
+                head_xyz = [float(v) for v in head_w]
+                tail_xyz = [float(v) for v in tail_w]
+
+                # quaternion
+                mat_world = bone_world_matrix(arm, pb)
+                quat = mat_world.to_quaternion()
+                quat_wxyz = [float(quat.w), float(quat.x), float(quat.y), float(quat.z)]
+
                 bones_payload[bname] = {
                     "parent": pb.parent.name if pb.parent else None,
+                    # 2D
                     "uv": [uv_h[0], uv_h[1]],
                     "in_frame": in_h,
                     "uv_tail": [uv_t[0], uv_t[1]],
                     "in_frame_tail": in_t,
-                    "depth_cam": depth_h
+                    "depth_cam": depth_h,
+                    # 3D
+                    "head": head_xyz,
+                    "tail": tail_xyz,
+                    # rotation
+                    "quat": quat_wxyz
                 }
+
             base_name = f"f{frame:05d}_c{ci:02d}"
             # render for each variant
             for variant in variants:
