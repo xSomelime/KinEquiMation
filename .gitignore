@@ -1,14 +1,16 @@
 venv
-env
-assets/*.blend
 .venv
+env
 .env
-.png
 png
-outputs
-.json
+.png
 json
-/data
+.json
+
+assets/*.blend
+dataset_pipeline/data
+model_pipeline/ai/models/checkpoints
+outputs
 
 __pycache__/
 *.pyc
