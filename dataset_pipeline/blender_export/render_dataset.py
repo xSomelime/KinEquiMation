@@ -1,4 +1,4 @@
-# blender/render_dataset.py
+# dataset_pipeline/blender_export/render_dataset.py
 import bpy, json, os, math, argparse, sys
 from mathutils import Vector
 from bpy_extras.object_utils import world_to_camera_view

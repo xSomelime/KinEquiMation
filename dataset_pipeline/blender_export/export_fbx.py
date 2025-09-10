@@ -1,3 +1,5 @@
+# dataset_pipeline/blender_export/export_fbx.py
+
 import bpy, os
 
 # Vart filen ska sparas (relativt projektroten)
