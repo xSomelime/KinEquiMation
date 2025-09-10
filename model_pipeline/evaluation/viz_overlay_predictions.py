@@ -1,163 +1,195 @@
-# ai/models/viz_overlay_predictions.py - Visualisera GT + Pred overlay
-import os, argparse, cv2, torch, json
+# model_pipeline/evaluation/viz_overlay_predictions.py
+# Visualisera 2D: GT (grön) + Pred (röd) + skeleton-linjer med MMPose HRNet-W32 (68kp)
+# Automatisk: hittar senaste run i --runs_root och tar dess "best*.pth".
+
+import os, argparse, json, cv2, random
 import numpy as np
-
-from .dataset import PoseGaitSequenceDataset
-from .tiny_model import PoseGaitTinyNet
-
-
-def move_to_device(batch, device, non_blocking=False):
-    out = {}
-    for k, v in batch.items():
-        if torch.is_tensor(v):
-            out[k] = v.to(device, non_blocking=non_blocking)
-        else:
-            out[k] = v
-    return out
+from mmpose.apis import init_model, inference_topdown
+from mmpose.structures import merge_data_samples
 
 
 def load_gt_uv(json_path, bones_order):
-    """
-    Läser ground truth UV från JSON-exporten (uv).
-    Returnerar [K,2] array i samma ordning som bones-listan.
-    """
+    """Läs ground truth (2D) från exporterad JSON."""
     with open(json_path, "r", encoding="utf-8") as f:
         obj = json.load(f)
     bones = obj.get("bones", {})
     pts = []
     for bname in bones_order:
         b = bones.get(bname, {})
-        if b.get("in_frame") and "uv" in b:
+        if b and "uv" in b and b.get("in_frame", True):
             u, v = b["uv"]
-            pts.append([u, v])
+            pts.append((int(u), int(v)))
         else:
-            pts.append([np.nan, np.nan])
-    return np.array(pts, dtype=float)
+            pts.append((None, None))
+    return pts
 
 
-def project_points(xyz, intr, extr, target_size=None):
-    """
-    Projektera 3D-punkter till 2D pixelkoordinater.
-    xyz: [K,3] torch eller numpy (världs-koordinater)
-    intr: dict med fx, fy, cx, cy
-    extr: [4,4] numpy (kamera matrix_world från Blender)
-    """
-    if torch.is_tensor(xyz):
-        pts = xyz.detach().cpu().numpy()
-    else:
-        pts = np.array(xyz)
+def load_skeleton_edges(edges_path, bones_order):
+    """Ladda skeleton_edges.json och mappa bone-namn till index i bones_order."""
+    if not os.path.exists(edges_path):
+        print(f"[warn] Hittar ingen skeleton_edges.json ({edges_path}) – ritar inga linjer.")
+        return []
+    with open(edges_path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
 
-    # Homogena koordinater [4,K]
-    pts_h = np.concatenate([pts, np.ones((pts.shape[0], 1))], axis=1).T  
+    name_to_idx = {name: i for i, name in enumerate(bones_order)}
 
-    # Blender → CV fix (Z-up, -Y forward → Z-forward, Y-down)
-    blender_to_cv = np.array([
-        [1, 0,  0, 0],
-        [0, 0, -1, 0],
-        [0, 1,  0, 0],
-        [0, 0,  0, 1]
-    ], dtype=float)
+    edges = []
+    if "edges" in raw:
+        for parent, child in raw["edges"]:
+            if parent in name_to_idx and child in name_to_idx:
+                edges.append((name_to_idx[parent], name_to_idx[child]))
 
-    cam_T = np.linalg.inv(extr) @ blender_to_cv
-    cam = cam_T @ pts_h
-    X, Y, Z = cam[0], cam[1], cam[2]
-
-    Z[Z == 0] = 1e-6  # undvik division med noll
-
-    u = intr["fx"] * (X / Z) + intr["cx"]
-    v = intr["fy"] * (Y / Z) + intr["cy"]
-
-    if target_size is not None:
-        H, W = target_size
-        u = np.clip(u, 0, W - 1)
-        v = np.clip(v, 0, H - 1)
-
-    return np.stack([u, v], axis=1)
+    print(f"[viz] Laddade {len(edges)} edges från {edges_path}")
+    return edges
 
 
-def draw_points(img, pts, color=(0,0,255), radius=3):
+def to_xy_tuples(pts):
+    """Konvertera array eller lista till [(x,y), ...] med ints."""
+    out = []
+    for p in pts:
+        if p is None:
+            out.append((None, None))
+        elif isinstance(p, (list, tuple, np.ndarray)) and len(p) >= 2:
+            x, y = p[0], p[1]
+            if x is None or y is None:
+                out.append((None, None))
+            else:
+                out.append((int(x), int(y)))
+        else:
+            out.append((None, None))
+    return out
+
+
+def draw_points_and_edges(img, pts, edges, point_color=(0, 255, 0), edge_color=(255, 0, 0), radius=3):
+    """Ritar keypoints (punkter) och skelettlänkar (linjer)."""
+    for (i1, i2) in edges:
+        if i1 < len(pts) and i2 < len(pts):
+            p1, p2 = pts[i1], pts[i2]
+            if p1[0] is not None and p2[0] is not None:
+                cv2.line(img, p1, p2, edge_color, 2)
     for (x, y) in pts:
-        if np.isnan(x) or np.isnan(y):
+        if x is None or y is None:
             continue
-        cv2.circle(img, (int(x), int(y)), radius, color, -1)
+        cv2.circle(img, (x, y), radius, point_color, -1)
     return img
 
 
-def main(args):
-    device = torch.device("cuda:0" if torch.cuda.is_available() and not args.cpu else "cpu")
-    print(f"[viz] using device {device}")
+def collect_all_frames(root_dir):
+    """Hämta alla (bild, json)-par från datasetet."""
+    samples = []
+    for clip in os.listdir(root_dir):
+        clip_dir = os.path.join(root_dir, clip)
+        if not os.path.isdir(clip_dir):
+            continue
 
-    ds = PoseGaitSequenceDataset(
-        project_root=args.project_root,
-        bones_txt=args.bones_txt,
-        image_size=args.image_size,
-        seq_len=args.seq_len,
-        stride=args.stride
-    )
-    print(f"[viz] dataset with {len(ds)} windows, {ds.K} keypoints")
+        images_root = os.path.join(clip_dir, "images")
+        labels_dir = os.path.join(clip_dir, "labels")
+        if not os.path.isdir(images_root) or not os.path.isdir(labels_dir):
+            continue
 
-    ckpt = torch.load(args.ckpt, map_location=device)
-    model = PoseGaitTinyNet(
-        K=ckpt["K"],
-        num_gaits=ckpt["num_gaits"],
-        feat_dim=ckpt["args"]["feat_dim"]
-    )
-    model.load_state_dict(ckpt["state_dict"])
-    model.to(device).eval()
-
-    os.makedirs(args.out_dir, exist_ok=True)
-
-    for idx in range(min(args.num_samples, len(ds))):
-        sample = ds[idx]
-        batch = {"images": sample["images"].unsqueeze(0)}
-        batch = move_to_device(batch, device)
-
-        with torch.no_grad():
-            pred_pose, _ = model(batch["images"])  # [1,T,K,3]
-
-        pred_pose = pred_pose[0]   # [T,K,3]
-        img_paths = sample["meta"]["img_paths"]
-        intr = sample["meta"]["intrinsics"]
-        extr = sample["meta"].get("extrinsics", np.eye(4))
-
-        for t in range(pred_pose.shape[0]):
-            img_path = img_paths[t]
-            img = cv2.imread(img_path)
-            if img is None:
+        for variant in os.listdir(images_root):
+            variant_dir = os.path.join(images_root, variant)
+            if not os.path.isdir(variant_dir):
                 continue
-            H, W = img.shape[:2]
+            for f in os.listdir(variant_dir):
+                if not f.endswith(".png"):
+                    continue
+                base_name = os.path.splitext(f)[0]
+                img_path = os.path.join(variant_dir, f)
+                json_path = os.path.join(labels_dir, base_name + ".json")
+                if os.path.exists(json_path):
+                    samples.append((img_path, json_path))
+                else:
+                    print(f"[warn] Hittade ingen GT för {img_path}")
+    return samples
 
-            # Hämta JSON som har samma basename som bilden (inkl. _c00)
-            base_name = os.path.splitext(os.path.basename(img_path))[0]  # t.ex. "f00001_c00"
-            clip_dir = os.path.dirname(os.path.dirname(os.path.dirname(img_path)))  # .../final/<action>
-            json_path = os.path.join(clip_dir, "labels", f"{base_name}.json")
 
-            # GT från uv
-            gt_2d = load_gt_uv(json_path, ds.bones)
+def find_latest_run_and_best(runs_root):
+    """Hitta senaste run-mapp och dess best*.pth."""
+    run_dirs = [os.path.join(runs_root, d) for d in os.listdir(runs_root) if os.path.isdir(os.path.join(runs_root, d))]
+    if not run_dirs:
+        raise FileNotFoundError(f"Inga run-mappar i {runs_root}")
+    latest_run = max(run_dirs, key=os.path.getmtime)
 
-            # Pred → 2D
-            pred_2d = project_points(pred_pose[t], intr, extr, target_size=(H, W))
+    ckpt_files = [f for f in os.listdir(latest_run) if f.startswith("best") and f.endswith(".pth")]
+    if not ckpt_files:
+        raise FileNotFoundError(f"Ingen 'best*.pth' i {latest_run}")
+    ckpt_file = ckpt_files[0]
+    ckpt_path = os.path.join(latest_run, ckpt_file)
+    return latest_run, ckpt_file, ckpt_path
 
-            # Rita
-            img_out = img.copy()
-            img_out = draw_points(img_out, gt_2d, color=(0,255,0))   # GT = grönt
-            img_out = draw_points(img_out, pred_2d, color=(0,0,255)) # Pred = rött
 
-            out_path = os.path.join(args.out_dir, f"overlay{idx:03d}_frame{t:03d}.png")
-            cv2.imwrite(out_path, img_out)
-            print(f"[viz] saved {out_path}")
+def main(args):
+    device = 'cuda' if (not args.cpu) else 'cpu'
+
+    run_dir, ckpt_file, ckpt_path = find_latest_run_and_best(args.runs_root)
+
+    run_name = os.path.basename(run_dir.rstrip("/"))
+    timestamp = run_name.split("_")[-2] + "_" + run_name.split("_")[-1]
+
+    out_dir = os.path.join(args.out_dir, f"horse_hrnet_viz_{timestamp}")
+    os.makedirs(out_dir, exist_ok=True)
+
+    print(f"[viz] Senaste run: {run_dir}")
+    print(f"[viz] Använder checkpoint: {ckpt_path}")
+    print(f"[viz] Sparar i: {out_dir}")
+
+    model = init_model(args.config, ckpt_path, device=device)
+
+    with open(args.bones_txt, "r", encoding="utf-8") as f:
+        bones_order = [line.strip() for line in f if line.strip()]
+
+    edges = load_skeleton_edges(args.edges_json, bones_order)
+
+    all_samples = collect_all_frames(args.img_root)
+    print(f"[viz] Hittade totalt {len(all_samples)} frames")
+    if not all_samples:
+        print("[viz] Inga frames hittades, avbryt.")
+        return
+
+    chosen = random.sample(all_samples, min(args.num_samples, len(all_samples)))
+
+    for idx, (img_path, json_path) in enumerate(chosen):
+        img = cv2.imread(img_path)
+        if img is None:
+            continue
+
+        H, W = img.shape[:2]
+        full_bbox = np.array([0, 0, W, H])
+        results = inference_topdown(model, img, [full_bbox], bbox_format='xyxy')
+        if not results:
+            print(f"[viz] Ingen prediktion för {img_path}")
+            continue
+
+        pred = merge_data_samples(results)
+        pred_pts = to_xy_tuples(pred.pred_instances.keypoints[0])
+        gt_pts = load_gt_uv(json_path, bones_order)
+
+        img_out = img.copy()
+        img_out = draw_points_and_edges(img_out, gt_pts, edges, point_color=(0, 255, 0), edge_color=(0, 200, 0))
+        img_out = draw_points_and_edges(img_out, pred_pts, edges, point_color=(0, 0, 255), edge_color=(255, 0, 0))
+
+        out_path = os.path.join(out_dir, f"{timestamp}_overlay_{idx:03d}.png")
+        cv2.imwrite(out_path, img_out)
+        print(f"[viz] sparade {out_path}")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--project_root", type=str, default=".")
-    ap.add_argument("--bones_txt", type=str, default="ai/data/def_bones.txt")
-    ap.add_argument("--image_size", type=int, default=384)
-    ap.add_argument("--stride", type=int, default=4)
-    ap.add_argument("--seq_len", type=int, default=8)
-    ap.add_argument("--ckpt", type=str, required=True)
-    ap.add_argument("--out_dir", type=str, default="ai/outputs/overlays_pred")
-    ap.add_argument("--num_samples", type=int, default=5)
+    ap.add_argument("--config", type=str, required=True,
+                    help="Path till MMPose config (t.ex. model_pipeline/configs/hrnet_w32_horse68_256x256.py)")
+    ap.add_argument("--runs_root", type=str, required=True,
+                    help="Root till alla run-mappar (t.ex. outputs/checkpoints)")
+    ap.add_argument("--img_root", type=str, required=True,
+                    help="Rotmapp till dataset/final (innehåller walk/, trot/, ...)")
+    ap.add_argument("--bones_txt", type=str, default="dataset_pipeline/data/dataset_exports/def_bones.txt")
+    ap.add_argument("--edges_json", type=str,
+                    default="dataset_pipeline/data/dataset_exports/skeleton_edges.json",
+                    help="Path till skeleton_edges.json")
+    ap.add_argument("--out_dir", type=str, default="outputs/overlays_hrnet")
+    ap.add_argument("--num_samples", type=int, default=50)
     ap.add_argument("--cpu", action="store_true")
     args = ap.parse_args()
+
     main(args)
