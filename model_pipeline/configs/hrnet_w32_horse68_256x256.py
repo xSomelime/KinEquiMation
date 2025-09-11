@@ -157,8 +157,8 @@ param_scheduler = [
     dict(type='MultiStepLR', by_epoch=True, milestones=[100, 140], gamma=0.1)
 ]
 
-# train_cfg = dict(by_epoch=True, max_epochs=160, val_interval=5) # <-- Kör över natten
-train_cfg = dict(by_epoch=True, max_epochs=1, val_interval=1) # <-- Kör under dagen
+train_cfg = dict(by_epoch=True, max_epochs=160, val_interval=5) # <-- Kör över natten
+# train_cfg = dict(by_epoch=True, max_epochs=1, val_interval=1) # <-- Kör under dagen
 val_cfg = dict()
 test_cfg = dict()
 
