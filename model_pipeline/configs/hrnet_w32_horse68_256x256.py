@@ -3,9 +3,8 @@
 import os
 import time
 
-# Skapa en unik run-id för den här körningen (YYMMDD_HHMM)
-run_id = time.strftime("%y%m%d_%H%M")  # t.ex. 250910_1420
-work_dir = os.path.join('outputs/checkpoints', f'horse_hrnet_{run_id}')
+work_dir = 'outputs/hrnet_runs'
+
 
 
 
