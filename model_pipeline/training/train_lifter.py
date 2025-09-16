@@ -11,13 +11,13 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from model_pipeline.models.lifter_3d import TemporalLifter
-from ai.models.dataset import PoseGaitSequenceDataset  # måste kunna returnera både 2D & 3D
+from model_pipeline.datasets.lifter_dataset import LifterDataset
 
 
 class MPJPELoss(nn.Module):
     """Mean Per Joint Position Error (L2)."""
     def forward(self, pred, target, mask=None):
-        # pred, target: [B, T, K, 3]
+        # pred, target: [B,T,K,3]
         error = torch.norm(pred - target, dim=3)  # [B,T,K]
         if mask is not None:
             error = error * mask
@@ -26,21 +26,21 @@ class MPJPELoss(nn.Module):
             return error.mean()
 
 
-def train_one_epoch(model, dataloader, optimizer, criterion, device, epoch, log_f):
+def train_one_epoch(model, dataloader, optimizer, criterion, device, epoch, log_f, args):
     model.train()
     total_loss = 0.0
     n_batches = 0
 
     for batch in dataloader:
-        # move to GPU om möjligt
+        # Flytta till GPU om möjligt
         batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
 
-        # inputs = 2D keypoints, targets = 3D keypoints
-        x = batch["keypoints_2d"]  # [B,T,K,2]
+        # inputs = 2D keypoints (u,v,vis), targets = 3D keypoints
+        x = batch["keypoints_2d"]  # [B,T,K,3]
         y = batch["keypoints_3d"]  # [B,T,K,3]
 
         B, T, K, C = x.shape
-        x = x.reshape(B, T, -1)  # [B,T,K*2]
+        x = x.reshape(B, T, -1)  # [B,T,K*3]
 
         preds = model(x)         # [B,T,K,3]
 
@@ -59,8 +59,12 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device, epoch, log_
     log_entry = {
         "epoch": epoch,
         "loss_3d": avg_loss,
-        "timestamp": time.time(),
+        "batch_size": args.batch_size,
+        "seq_len": args.seq_len,
+        "lr": args.lr,
+        "timestamp": time.strftime("%y%m%d_%H%M"),
     }
+
     log_f.write(json.dumps(log_entry) + "\n")
     log_f.flush()
 
@@ -69,9 +73,11 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device, epoch, log_
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=str,
-                        default="dataset_pipeline/data/exports/dataset.json",
-                        help="Path till dataset med 2D & 3D keypoints")
+    parser.add_argument(
+        "--data", type=str,
+        default="dataset_pipeline/data/dataset_exports/lifter_dataset.json",
+        help="Path till dataset med 2D & 3D keypoints"
+    )
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--seq_len", type=int, default=27)
@@ -80,20 +86,18 @@ def main():
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[INFO] Training on device: {device}")
 
-    # Dataset (OBS: se till att PoseGaitSequenceDataset returnerar dict med:
-    # "keypoints_2d": [B,T,K,2], "keypoints_3d": [B,T,K,3])
-    dataset = PoseGaitSequenceDataset(
+    # Dataset
+    dataset = LifterDataset(
         ann_file=args.data,
         seq_len=args.seq_len,
-        input_type="2d",
-        output_type="3d",
     )
     dataloader = DataLoader(dataset, batch_size=args.batch_size,
                             shuffle=True, drop_last=True)
 
-    # Modell
-    model = TemporalLifter(num_joints=68, in_features=2,
+    # Modell (nu in_features=3 eftersom vi har u,v,vis)
+    model = TemporalLifter(num_joints=68, in_features=3,
                            hidden_dim=1024, num_blocks=3)
     model = model.to(device)
 
@@ -102,7 +106,7 @@ def main():
     criterion = MPJPELoss()
 
     # Run directory
-    run_dir = Path(args.save_dir) / time.strftime("%Y%m%d_%H%M%S")
+    run_dir = Path(args.save_dir) / time.strftime("%y%m%d_%H%M")
     run_dir.mkdir(parents=True, exist_ok=True)
     log_file = run_dir / "training_log.json"
     ckpt_dir = run_dir / "checkpoints"
@@ -111,7 +115,7 @@ def main():
     with open(log_file, "w", encoding="utf-8") as log_f:
         for epoch in range(1, args.epochs + 1):
             avg_loss = train_one_epoch(
-                model, dataloader, optimizer, criterion, device, epoch, log_f
+                model, dataloader, optimizer, criterion, device, epoch, log_f, args
             )
             print(f"[Epoch {epoch}/{args.epochs}] Loss3D: {avg_loss:.6f}")
 

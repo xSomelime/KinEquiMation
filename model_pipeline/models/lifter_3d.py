@@ -6,17 +6,18 @@ import torch.nn.functional as F
 
 
 class TemporalBlock(nn.Module):
-    def __init__(self, channels, kernel_size=3, dilation=1, dropout=0.25):
+    def __init__(self, in_channels, out_channels, kernel_size=3, dilation=1, dropout=0.25):
         super().__init__()
         pad = (kernel_size - 1) * dilation // 2
-        self.conv1 = nn.Conv1d(channels, channels, kernel_size,
+        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size,
                                padding=pad, dilation=dilation)
-        self.bn1 = nn.BatchNorm1d(channels)
-        self.conv2 = nn.Conv1d(channels, channels, kernel_size,
+        self.bn1 = nn.BatchNorm1d(out_channels)
+        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size,
                                padding=pad, dilation=dilation)
-        self.bn2 = nn.BatchNorm1d(channels)
+        self.bn2 = nn.BatchNorm1d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(dropout)
+
 
     def forward(self, x):
         res = x
