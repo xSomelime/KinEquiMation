@@ -1,4 +1,3 @@
-# animation_pipeline/build_apply_ml_rig.py
 import bpy
 import json
 import sys
@@ -10,6 +9,7 @@ if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
 from animation_pipeline.ml_rig_builder import build_ml_rig, add_constraints
+from animation_pipeline.rokoko_retargeter import load_mapping_into_rokoko  # ✅ import här
 
 DEBUG_BONES = {"DEF-spine.001", "DEF-forearm.L", "DEF-r_hoof.R"}
 
@@ -113,7 +113,18 @@ def prepare_and_apply(action_name=None, with_constraints=False):
     else:
         print("[INFO] Skippade constraints på ML_rig (debug-läge)")
 
+    # ✅ Ladda in mapping till Rokoko
+    try:
+        map_path = project_root / "outputs" / "animation_pipeline" / "def_to_ctrl_map.json"
+        load_mapping_into_rokoko(str(map_path))
+        print("[INFO] Rokoko Retargeter-mapping laddad")
+    except Exception as e:
+        print(f"[WARN] Kunde inte ladda Rokoko-mapping: {e}")
 
+
+# =====================
+#  MAIN
+# =====================
 if __name__ == "__main__":
     action_name = None
     if "--" in sys.argv:
