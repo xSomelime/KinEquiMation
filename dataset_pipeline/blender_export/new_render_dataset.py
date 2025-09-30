@@ -1,6 +1,7 @@
 # dataset_pipeline/blender_export/new_render_dataset.py
 import bpy, json, os, math, argparse, sys
 from mathutils import Vector
+from bpy_extras.object_utils import world_to_camera_view
 from pathlib import Path
 
 # ---------- CLI ----------
@@ -137,7 +138,6 @@ def apply_flat_material(mesh_names):
 
 # ---------- Kameror ----------
 def setup_cameras(act_name, center, radius, cam_height, num_cams=12):
-    # rensa gamla kameror
     for o in list(bpy.data.objects):
         if o.name.startswith(f"{act_name}_Cam_") or o.name == f"{act_name}_Target":
             try: bpy.data.objects.remove(o, do_unlink=True)
@@ -166,6 +166,31 @@ def setup_cameras(act_name, center, radius, cam_height, num_cams=12):
             cam_index += 1
     return cameras
 
+# ---------- Helpers ----------
+def get_intrinsics(scene, cam_obj):
+    r = scene.render
+    res_x, res_y = r.resolution_x, r.resolution_y
+    f_mm = cam_obj.data.lens
+    sw, sh = cam_obj.data.sensor_width, cam_obj.data.sensor_height
+    fx = f_mm / sw * res_x
+    fy = f_mm / sh * res_y
+    cx = res_x * 0.5
+    cy = res_y * 0.5
+    K = [[fx, 0.0, cx],
+         [0.0, fy, cy],
+         [0.0, 0.0, 1.0]]
+    return {"width": res_x, "height": res_y, "fx": fx, "fy": fy, "cx": cx, "cy": cy, "K": K}
+
+def project_point(scene, cam_obj, world_co):
+    ndc = world_to_camera_view(scene, cam_obj, world_co)
+    x_ndc, y_ndc = float(ndc.x), float(ndc.y)
+    w, h = scene.render.resolution_x, scene.render.resolution_y
+    u, v = x_ndc * w, (1.0 - y_ndc) * h
+    p_cam = cam_obj.matrix_world.inverted() @ world_co
+    depth = float(-p_cam.z)
+    in_frame = (0 <= x_ndc <= 1 and 0 <= y_ndc <= 1 and depth > 0)
+    return (u, v), in_frame, depth
+
 # ---------- Main ----------
 variants = [args.variant] if args.variant != "both" else ["flat", "materials"]
 actions = [s.strip() for s in args.actions.split(",") if s.strip()]
@@ -184,7 +209,6 @@ for act_name in actions:
     f_start, f_end = map(int, act.frame_range)
     frame_range = [f_start] if args.single_frame else range(f_start, f_end+1)
 
-    # EDIT-mode: samla statisk info
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="EDIT")
     edit_bones = {}
@@ -197,7 +221,6 @@ for act_name in actions:
         }
     bpy.ops.object.mode_set(mode="OBJECT")
 
-    # setup cameras
     scene.frame_set(f_start)
     bone_pts = [arm.matrix_world @ pb.head for pb in arm.pose.bones if pb.name.startswith("DEF")] + \
                [arm.matrix_world @ pb.tail for pb in arm.pose.bones if pb.name.startswith("DEF")]
@@ -211,45 +234,68 @@ for act_name in actions:
 
     for frame in frame_range:
         scene.frame_set(frame)
-
-        # Root-matris
         root_mat_world = arm.matrix_world @ root_pb.matrix
 
-        bones_payload = {}
-        for pb in arm.pose.bones:
-            if not pb.name.startswith("DEF"): continue
-            static = edit_bones.get(pb.name, {})
-            mat_world = arm.matrix_world @ pb.matrix
-            mat_rel_root = root_mat_world.inverted() @ mat_world
-            mat_pose = arm.matrix_world.inverted() @ mat_world
-            rest = pb.bone.matrix_local
-            mat_basis = rest.inverted() @ mat_pose
-
-            bones_payload[pb.name] = {
-                "roll": static.get("roll", 0.0),
-                "head_edit": static.get("head"),
-                "tail_edit": static.get("tail"),
-                "matrix_world": [list(row) for row in mat_world],
-                "matrix_rel_root": [list(row) for row in mat_rel_root],
-                "matrix_basis": [list(row) for row in mat_basis],
-            }
-
-        # Spara JSON
-        payload = {
-            "action": act_name,
-            "frame": frame,
-            "armature": arm.name,
-            "root_matrix_world": [list(row) for row in root_mat_world],
-            "bones": bones_payload,
-        }
-        outpath = labels_dir / f"{frame:06d}.json"
-        with open(outpath, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
-
-        # Rendera bilder
         for ci, cam in enumerate(cameras):
             scene.camera = cam
             base_name = f"f{frame:05d}_c{ci:02d}"
+
+            intr = get_intrinsics(scene, cam)
+            cam_mw = cam.matrix_world
+            cam_extr = {"matrix_world": [[float(v) for v in row] for row in cam_mw]}
+
+            bones_payload = {}
+            for pb in arm.pose.bones:
+                if not pb.name.startswith("DEF"):
+                    continue
+
+                static = edit_bones.get(pb.name, {})
+
+                # world-space matrices
+                mat_world = arm.matrix_world @ pb.matrix
+                mat_rel_root = root_mat_world.inverted() @ mat_world
+                mat_pose = arm.matrix_world.inverted() @ mat_world
+                rest = pb.bone.matrix_local
+                mat_basis = rest.inverted() @ mat_pose
+
+                # animerade head/tail i world space
+                head_w = arm.matrix_world @ pb.head
+                tail_w = arm.matrix_world @ pb.tail
+
+                # 2D projektioner
+                uv_h, in_h, depth_h = project_point(scene, cam, head_w)
+                uv_t, in_t, depth_t = project_point(scene, cam, tail_w)
+
+                bones_payload[pb.name] = {
+                    "roll": static.get("roll", 0.0),
+                    "head_edit": static.get("head"),   # statiskt (som referens)
+                    "tail_edit": static.get("tail"),
+                    "head": [head_w.x, head_w.y, head_w.z],   # ← dynamiskt!
+                    "tail": [tail_w.x, tail_w.y, tail_w.z],   # ← dynamiskt!
+                    "matrix_world": [list(row) for row in mat_world],
+                    "matrix_rel_root": [list(row) for row in mat_rel_root],
+                    "matrix_basis": [list(row) for row in mat_basis],
+                    "uv": [uv_h[0], uv_h[1]],
+                    "in_frame": in_h,
+                    "uv_tail": [uv_t[0], uv_t[1]],
+                    "in_frame_tail": in_t,
+                    "depth_cam": depth_h,
+                }
+
+            payload = {
+                "action": act_name,
+                "frame": frame,
+                "camera": cam.name,
+                "camera_intrinsics": intr,
+                "camera_extrinsics": cam_extr,
+                "armature": arm.name,
+                "root_matrix_world": [list(row) for row in root_mat_world],
+                "bones": bones_payload,
+            }
+            json_path = labels_dir / (base_name + ".json")
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+
             for variant in variants:
                 if variant == "flat":
                     apply_flat_material(dataset_meshes)
