@@ -43,7 +43,7 @@ def main():
     # ---- Samla DEF-bones ----
     pose_bones = [
     pb for pb in arm.pose.bones
-    if pb.name.startswith("DEF-") and not pb.name.startswith(("DEF-mane_base", "DEF-mane_top"))
+    if pb.name.startswith("DEF-") 
     ]
 
     if not pose_bones:

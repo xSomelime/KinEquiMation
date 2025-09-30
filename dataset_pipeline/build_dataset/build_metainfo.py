@@ -30,7 +30,7 @@ def main():
 
     # ---- JSON-metainfo (för coco_synth_68.json) ----
     metainfo_json = {
-        "dataset_name": "horse68",
+        "dataset_name": "horse80",
         "keypoint_names": keypoint_names,
         "skeleton": skeleton,
         "joint_weights": [1.0] * len(keypoint_names),
@@ -45,7 +45,7 @@ def main():
     print(f"- {len(keypoint_names)} keypoints")
     print(f"- {len(skeleton)} edges")
 
-    # ---- Python-metainfo (för MMPose horse68.py) ----
+    # ---- Python-metainfo (för MMPose horse80.py) ----
     keypoint_info = {}
     for i, name in enumerate(keypoint_names):
         side = "upper"
@@ -71,11 +71,11 @@ def main():
     skeleton_info = {i: {"link": [pa, ch], "id": i, "color": [255, 0, 0]}
                      for i, (pa, ch) in enumerate(skeleton)}
 
-    metainfo_py = f"""# AUTO-GENERATED FILE: horse68.py
-# Correct metainfo for horse68 (from def_bones + skeleton_edges)
+    metainfo_py = f"""# AUTO-GENERATED FILE: horse80.py
+# Correct metainfo for horse80 (from def_bones + skeleton_edges)
 
 dataset_info = dict(
-    dataset_name='horse68',
+    dataset_name='horse80',
     paper_info=dict(
         author='KinEquiMation',
         title='Horse Pose Estimation (68 keypoints)',

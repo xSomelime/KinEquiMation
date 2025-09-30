@@ -2,20 +2,6 @@
 import os, json, glob, argparse
 import numpy as np
 
-def find_image(clip_dir, base, prefer="materials"):
-    # 1) preferred variant
-    p1 = os.path.join(clip_dir, "images", prefer, base + ".png")
-    if os.path.exists(p1):
-        return p1
-    # 2) alternative variant
-    alt = "materials" if prefer == "flat" else "flat"
-    p2 = os.path.join(clip_dir, "images", alt, base + ".png")
-    if os.path.exists(p2):
-        return p2
-    # 3) fallback: search deeper
-    hits = glob.glob(os.path.join(clip_dir, "images", "**", base + ".png"), recursive=True)
-    return hits[0] if hits else None
-
 def bbox_from_kpts(kpts_xyv):
     xs, ys = [], []
     for i in range(0, len(kpts_xyv), 3):
@@ -41,8 +27,6 @@ def main():
                     help="Path to def_bones.txt")
     ap.add_argument("--skeleton", type=str, required=True,
                     help="Path to skeleton_edges.json")
-    ap.add_argument("--prefer", type=str, default="materials", choices=["materials","flat"],
-                    help="Which image variant to prefer")
     ap.add_argument("--out", type=str, required=True,
                     help="Path to output coco json file")
     args = ap.parse_args()
@@ -62,7 +46,6 @@ def main():
         if pa in name_to_idx and ch in name_to_idx:
             skeleton.append([name_to_idx[pa], name_to_idx[ch]])  
 
-
     # Scan dataset
     clips = [d for d in glob.glob(os.path.join(args.dataset_root, "*")) if os.path.isdir(d)]
     assert clips, f"No clips found in {args.dataset_root}"
@@ -78,9 +61,6 @@ def main():
 
         for jp in jfiles:
             base = os.path.splitext(os.path.basename(jp))[0]  # e.g. 'f00012_c03'
-            imgp = find_image(clip_dir, base, prefer=args.prefer)
-            if not imgp:
-                continue
 
             with open(jp, "r", encoding="utf-8") as f:
                 meta = json.load(f)
@@ -107,23 +87,30 @@ def main():
 
             bbox, area = bbox_from_kpts(kpts)
 
-            images.append({
-                "id": img_id,
-                "file_name": os.path.abspath(imgp),
-                "width": int(w), "height": int(h)
-            })
-            annotations.append({
-                "id": ann_id,
-                "image_id": img_id,
-                "category_id": 1,
-                "num_keypoints": int(sum(1 for i in range(2, 3*K, 3) if kpts[i] > 0)),
-                "keypoints": kpts,
-                "bbox": bbox,
-                "area": area,
-                "iscrowd": 0
-            })
-            img_id += 1
-            ann_id += 1
+            # --- Nytt: exportera både flat + materials
+            for variant in ["flat", "materials"]:
+                imgp = os.path.join(clip_dir, "images", variant, base + ".png")
+                if not os.path.exists(imgp):
+                    continue
+
+                images.append({
+                    "id": img_id,
+                    "file_name": os.path.relpath(imgp, args.dataset_root).replace("\\", "/"),
+                    "width": int(w), "height": int(h),
+                    "variant": variant
+                })
+                annotations.append({
+                    "id": ann_id,
+                    "image_id": img_id,
+                    "category_id": 1,
+                    "num_keypoints": int(sum(1 for i in range(2, 3*K, 3) if kpts[i] > 0)),
+                    "keypoints": kpts,
+                    "bbox": bbox,
+                    "area": area,
+                    "iscrowd": 0
+                })
+                img_id += 1
+                ann_id += 1
 
     coco = {
         "images": images,
