@@ -28,7 +28,7 @@ class TemporalBlock(nn.Module):
 
 
 class TemporalLifter(nn.Module):
-    def __init__(self, num_joints=68, in_features=2,
+    def __init__(self, num_joints=80, in_features=3,
                  hidden_dim=1024, num_blocks=3, kernel_size=3, dropout=0.25):
         super().__init__()
         self.input_dim = num_joints * in_features
@@ -70,7 +70,7 @@ class TemporalLifter(nn.Module):
 
 if __name__ == "__main__":
     # Snabb testkörning
-    model = TemporalLifter(num_joints=68, in_features=2, hidden_dim=256, num_blocks=2)
-    dummy = torch.randn(2, 27, 68 * 2)  # B=2, T=27 frames, 68 keypoints × 2D
+    model = TemporalLifter(num_joints=80, in_features=2, hidden_dim=256, num_blocks=2)
+    dummy = torch.randn(2, 27, 80 * 2)  # B=2, T=27 frames, 80 keypoints × 2D
     out = model(dummy)
-    print("Output shape:", out.shape)  # [2, 27, 68*3]
+    print("Output shape:", out.shape)  # [2, 27, 80*3]
