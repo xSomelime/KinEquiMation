@@ -37,7 +37,7 @@ def compare_rigs(ref_rig_name="rig", test_rig_name="ML_rig"):
 
 
 def prepare_and_apply(action_name=None, with_constraints=False):
-    preds_root = project_root / "outputs" / "rig_action_exports"        #  <<---- senare "lifter_preds"
+    preds_root = project_root / "outputs" / "lifter_preds" # "rig_action_exports"        #  <<---- senare "lifter_preds"
     json_path = project_root / "outputs" / "animation_pipeline" / "skeleton_edges_from_rig.json"
 
     ml_rig = build_ml_rig(str(json_path))
@@ -65,6 +65,9 @@ def prepare_and_apply(action_name=None, with_constraints=False):
     print(f"[INFO] Laddar {len(frame_files)} frames")
 
     for frame_idx, frame_file in enumerate(frame_files, start=1):
+        if frame_file.name == "meta.json":
+            continue  # hoppa över metadatafilen
+
         with open(frame_file, "r", encoding="utf-8") as f:
             frame_data = json.load(f)
 
@@ -88,8 +91,10 @@ def prepare_and_apply(action_name=None, with_constraints=False):
                 mat_pose = ml_rig.matrix_world.inverted() @ mat_world
 
                 # Korrigera mot benets restpose
+                # Alltid ta från Blender (sanity check-logik)
                 rest = pb.bone.matrix_local
                 pb.matrix_basis = rest.inverted() @ mat_pose
+
 
                 # Keyframes
                 pb.keyframe_insert(data_path="location", frame=frame_idx)
