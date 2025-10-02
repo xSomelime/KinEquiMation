@@ -8,10 +8,13 @@ project_root = Path(bpy.path.abspath("//.."))
 if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
-from animation_pipeline.ml_rig_builder import build_ml_rig, add_constraints
-from animation_pipeline.rokoko_retargeter import load_mapping_into_rokoko  # ✅ import här
+from animation_pipeline.ml_rig_builder import build_ml_rig
+from animation_pipeline.rokoko_retargeter import load_mapping_into_rokoko
 
 DEBUG_BONES = {"DEF-spine.001", "DEF-forearm.L", "DEF-r_hoof.R"}
+
+# 🔹 Hovar vi vill ge offset
+HOOF_BONES = {"DEF-f_hoof.L", "DEF-f_hoof.R", "DEF-r_hoof.L", "DEF-r_hoof.R"}
 
 
 def anchor_root(ml_rig):
@@ -37,7 +40,7 @@ def compare_rigs(ref_rig_name="rig", test_rig_name="ML_rig"):
 
 
 def prepare_and_apply(action_name=None, with_constraints=False):
-    preds_root = project_root / "outputs" / "lifter_preds" # "rig_action_exports"        #  <<---- senare "lifter_preds"
+    preds_root = project_root / "outputs" / "lifter_preds"
     json_path = project_root / "outputs" / "animation_pipeline" / "skeleton_edges_from_rig.json"
 
     ml_rig = build_ml_rig(str(json_path))
@@ -66,7 +69,7 @@ def prepare_and_apply(action_name=None, with_constraints=False):
 
     for frame_idx, frame_file in enumerate(frame_files, start=1):
         if frame_file.name == "meta.json":
-            continue  # hoppa över metadatafilen
+            continue
 
         with open(frame_file, "r", encoding="utf-8") as f:
             frame_data = json.load(f)
@@ -83,29 +86,20 @@ def prepare_and_apply(action_name=None, with_constraints=False):
 
             if "matrix_rel_root" in data and data["matrix_rel_root"]:
                 mat_rel_root = mathutils.Matrix(data["matrix_rel_root"])
-
-                # Gör om root-relativ till world
                 mat_world = root_mat_world @ mat_rel_root
 
-                # World → armature space
+                # 🔹 Extra offset för hovarna: flytta pivot från head → tail
+                if bone_name in HOOF_BONES:
+                    tail_offset = mathutils.Vector(data["tail"]) - mathutils.Vector(data["head"])
+                    mat_world.translation += 1.3 * tail_offset   # 🔹 skala upp
+
                 mat_pose = ml_rig.matrix_world.inverted() @ mat_world
-
-                # Korrigera mot benets restpose
-                # Alltid ta från Blender (sanity check-logik)
                 rest = pb.bone.matrix_local
+
                 pb.matrix_basis = rest.inverted() @ mat_pose
-
-
-                # Keyframes
                 pb.keyframe_insert(data_path="location", frame=frame_idx)
                 pb.keyframe_insert(data_path="rotation_quaternion", frame=frame_idx)
                 pb.keyframe_insert(data_path="scale", frame=frame_idx)
-
-                if bone_name in DEBUG_BONES and frame_idx <= 3:
-                    print(f"\n[DEBUG] Frame {frame_idx} Bone {bone_name}")
-                    print("  Source (rel_root):", mat_rel_root)
-                    print("  Rest local       :", rest)
-                    print("  Applied basis    :", pb.matrix_basis)
 
         if frame_idx == 1:
             print(f"[DEBUG] Frame 1 applied ({len(bones_data)} DEF-bones)")
@@ -115,21 +109,27 @@ def prepare_and_apply(action_name=None, with_constraints=False):
     if with_constraints:
         add_constraints(ml_rig)
         print("[INFO] Constraints applicerade på ML_rig")
-    else:
-        print("[INFO] Skippade constraints på ML_rig (debug-läge)")
 
-    # ✅ Ladda in mapping till Rokoko
+    # Setup för Rokoko
     try:
-        map_path = project_root / "outputs" / "animation_pipeline" / "def_to_ctrl_map.json"
+        src = bpy.data.objects.get("ML_rig")
+        tgt = bpy.data.objects.get("rig")
+        if not src or not tgt:
+            raise RuntimeError("Hittade inte ML_rig eller rig i scenen!")
+
+        bpy.context.scene.rsl_retargeting_armature_source = src
+        bpy.context.scene.rsl_retargeting_armature_target = tgt
+        print(f"[INFO] Rokoko Source={src.name}, Target={tgt.name}")
+
+        bpy.ops.rsl.build_bone_list()
+        map_path = project_root / "outputs" / "animation_pipeline" / "controller_mapping.json"
         load_mapping_into_rokoko(str(map_path))
         print("[INFO] Rokoko Retargeter-mapping laddad")
+
     except Exception as e:
-        print(f"[WARN] Kunde inte ladda Rokoko-mapping: {e}")
+        print(f"[WARN] Kunde inte sätta upp Rokoko-retarget: {e}")
 
 
-# =====================
-#  MAIN
-# =====================
 if __name__ == "__main__":
     action_name = None
     if "--" in sys.argv:

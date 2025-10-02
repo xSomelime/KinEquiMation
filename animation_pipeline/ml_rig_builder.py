@@ -48,63 +48,7 @@ def build_ml_rig(json_path: str):
         edit_bones[name].parent = root
         edit_bones[name].use_connect = False
 
-
     bpy.ops.object.mode_set(mode="OBJECT")
     print(f"[INFO] ML_rig skapad med {len(bones_data)} DEF-bones (+ root, hierarki från parent-fältet)")
     return ml_rig
 
-
-# --- Constraint helpers (oförändrade) ---
-def add_leg_ik_and_limit(arm, hoof_name, chain_start, chain_count, ground_obj=None):
-    """Skapar IK från chain_start → hoof, och lägger limit så att hoven inte går under z=0.
-       Om ground_obj anges används den som referens för markkontakt."""
-    hoof = arm.pose.bones.get(hoof_name)
-    start = arm.pose.bones.get(chain_start)
-    if not hoof or not start:
-        print(f"[WARN] Kunde inte skapa IK för {hoof_name}")
-        return
-
-    # IK
-    ik = start.constraints.new('IK')
-    ik.target = arm
-    ik.subtarget = hoof.name
-    ik.chain_count = chain_count
-
-    # Limit Z
-    limit = hoof.constraints.new('LIMIT_LOCATION')
-    limit.use_min_z = True
-    limit.min_z = 0.0
-    limit.owner_space = 'LOCAL'
-    print(f"[INFO] IK + Limit Location lagt på {hoof_name} (Z ≥ 0)")
-
-    if ground_obj:
-        floor = hoof.constraints.new('FLOOR')
-        floor.target = ground_obj
-        floor.use_sticky = True
-        floor.sticky_radius = 0.05
-        floor.offset = 0.0
-        print(f"[INFO] Floor-constraint lagt på {hoof_name} mot {ground_obj.name}")
-
-
-def add_constraints(ml_rig):
-    """Lägg till IK på alla fyra ben och parenta head → skull."""
-    bpy.ops.object.mode_set(mode='POSE')
-
-    add_leg_ik_and_limit(ml_rig, hoof_name="DEF-f_hoof.L",
-                         chain_start="DEF-forearm.L", chain_count=5)
-    add_leg_ik_and_limit(ml_rig, hoof_name="DEF-f_hoof.R",
-                         chain_start="DEF-forearm.R", chain_count=5)
-    add_leg_ik_and_limit(ml_rig, hoof_name="DEF-r_hoof.L",
-                         chain_start="DEF-lower_leg.L", chain_count=6)
-    add_leg_ik_and_limit(ml_rig, hoof_name="DEF-r_hoof.R",
-                         chain_start="DEF-lower_leg.R", chain_count=6)
-
-    # Head → Skull
-    bpy.ops.object.mode_set(mode='EDIT')
-    eb = ml_rig.data.edit_bones
-    if "DEF-head" in eb and "DEF-skull" in eb:
-        eb["DEF-head"].parent = eb["DEF-skull"]
-        print("[INFO] DEF-head parented till DEF-skull")
-    bpy.ops.object.mode_set(mode='POSE')
-
-    print("[INFO] Alla constraints tillagda")

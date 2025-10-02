@@ -15,38 +15,50 @@ def load_mapping_into_rokoko(json_path, source_armature="ML_rig", target_armatur
 
     bpy.context.scene.rsl_retargeting_armature_source = source_obj
     bpy.context.scene.rsl_retargeting_armature_target = target_obj
+
     print(f"[INFO] Source set to {source_obj.name}, Target set to {target_obj.name}")
 
-    # Bygg Rokoko’s egen bone list först
+    # 1. Låt Rokoko bygga sin lista först
     bpy.ops.rsl.build_bone_list()
+    bpy.context.view_layer.update()
+    print("[INFO] Rokoko bone list byggd")
 
-    updated, skipped = 0, 0
-    for def_bone, entry in mapping_data.items():
-        target_bone = entry.get("controller")
-        if not target_bone:
-            skipped += 1
-            continue
+    # 2. Patch-funktion som körs efter en delay
+    def patch_mapping():
+        updated, skipped = 0, 0
+        bone_list = bpy.context.scene.rsl_retargeting_bone_list
 
-        for item in bpy.context.scene.rsl_retargeting_bone_list:
-            if item.bone_name_source == def_bone:
-                # Ersätt alltid Rokokos auto-target om det är DEF/MCH/ORG
-                if item.bone_name_target.startswith(("DEF", "MCH", "ORG")):
+        if not bone_list:
+            print("[WARN] Rokoko bone list är tom, försöker igen senare...")
+            return 0.5  # prova igen om 0.5 sek
+
+        for item in bone_list:
+            # Rokoko använder "custom_bone_DEF-..." som source
+            def_bone = item.bone_name_source.replace("custom_bone_", "")
+            if def_bone in mapping_data:
+                target_bone = mapping_data[def_bone]["controller"]
+                if target_bone:
+                    old_target = item.bone_name_target
                     item.bone_name_target = target_bone
                     item.is_custom = True
                     updated += 1
-                    print(f"[REPLACE] {def_bone} → {target_bone}")
-                else:
-                    print(f"[KEEP] {def_bone} redan satt till {item.bone_name_target}")
-                break
+                    print(f"[REPLACE] {def_bone} : {old_target} → {target_bone}")
+            else:
+                skipped += 1
 
-    print(f"[INFO] Uppdaterade {updated} mappings, hoppade över {skipped} (saknar controller).")
+        print(f"[INFO] Uppdaterade {updated} mappings, hoppade över {skipped}.")
 
-    # Debug: skriv slutliga targets
-    for i, item in enumerate(bpy.context.scene.rsl_retargeting_bone_list):
-        print(f"{i:03d} | source={item.bone_name_source}, target={item.bone_name_target}, is_custom={item.is_custom}")
+        # Debug: skriv slutliga targets
+        for i, item in enumerate(bone_list):
+            print(f"{i:03d} | source={item.bone_name_source}, target={item.bone_name_target}, is_custom={item.is_custom}")
+
+        return None  # stoppa timern efter en körning
+
+    # Registrera patch-funktionen att köras efter 0.5 sek
+    bpy.app.timers.register(patch_mapping, first_interval=0.5)
 
 
 if __name__ == "__main__":
     project_root = Path(bpy.path.abspath("//.."))
-    json_path = project_root / "outputs" / "animation_pipeline" / "def_to_ctrl_map.json"
+    json_path = project_root / "outputs" / "animation_pipeline" / "controller_mapping.json"
     load_mapping_into_rokoko(str(json_path))
