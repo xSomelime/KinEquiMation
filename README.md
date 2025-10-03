@@ -1,107 +1,133 @@
-🐎 KinEquiMation
+# KinEquiMation 🐎
+**Markerless Motion Capture & Pose Estimation for Horses (2D → 3D)**
 
-KinEquiMation is a project for training and using a 2D→3D horse pose estimation model, based on MMPose (HRNet) and a custom synthetic dataset generated in Blender.
-It’s part of a school assignment, but also serves as the foundation for a future horse-themed game project.
-Project Structure
+KinEquiMation är ett AI-baserat system som konverterar vanliga 2D-videor av hästar till 3D-riggad animation i Blender.  
+Projektet eliminerar behovet av dyr motion capture-utrustning genom att kombinera **pose estimation**, **temporal 3D-lifting** och **retargeting**.
 
-```
-📂 Project Structure
-dataset_pipeline/       # Scripts for generating & building datasets
-  ├── blender_export/   # Blender export scripts (FBX, labels, images, skeleton)
-  ├── build_dataset/    # Scripts to merge & convert dataset (CSV, COCO JSON)
-  └── debug/            # Sanity checks & visualization of dataset
+---
 
-model_pipeline/
-  ├── configs/          # MMPose configs (HRNet, lifter, horse-specific configs)
-  ├── checkpoints/      # Pretrained & fine-tuned weights (.pth) [ignored in Git]
-  ├── training/         # Custom training loops (if needed)
-  └── evaluation/       # Inference & visualization of model predictions
+## 🚀 Projektstatus
 
-outputs/                # Final results (predictions, overlays, demo outputs, trained checkpoints)
-assets/                 # Blender models (.blend, rigs, materials)
+### Fas 1 – Dataset ✅
+- Syntetiskt dataset genererat i **Blender**.  
+- Export av 3D ground truth (xyz + rotationer).  
+- Dataset i **COCO Keypoints-format (68 kp)** klart.  
 
-requirements.txt        # Python deps for Windows/Git Bash (CPU / no CUDA)
-requirements-wsl.txt    # Python deps for WSL/Ubuntu (with CUDA support)
-README.md
+### Fas 2 – 2D Pose Estimation ✅
+- Modell: **MMPose (HRNet-W32, animal-pretrain)**.  
+- Tränad på syntetiska frames.  
+- Overlay-script verifierar prediktionerna.  
 
+### Fas 3 – 3D Lifting ✅
+- Temporal modell inspirerad av **VideoPose3D**.  
+- Tränad på syntetiska data.  
+- `lifter_preds` exporteras och kan importeras till Blender.  
 
+### Fas 4 – Retargeting ✅
+- Python-script bygger **ML_rig** (kopierar DEF-bones utan constraints).  
+- Mappning **DEF → controllers** möjliggör retargeting i Blender.  
+- Retargeting görs med **Rokoko**.  
+- Därefter kan animationen **justeras direkt på riggen** som retargetats till.  
 
-
-⚙️ Environment Setup
-
-We use two environments:
-
-    Windows + Git Bash (venv)
-    Used for dataset generation (Blender scripts) and small utility scripts.
-
-      Install Python 3.10 and dependencies:
-  
-      python -m venv venv
-      . venv/Scripts/activate
-      pip install -r requirements.txt
-
-
-
-
-    WSL/Ubuntu (conda or venv)
-    Used for training models with PyTorch + CUDA.
-
-      Install dependencies with:
-      
-      conda create -n horse python=3.10
-      conda activate horse
-      pip install -r requirements-wsl.txt
-
-
-⚠️ Note:
-
-    Datasets (dataset_pipeline/data/…) and checkpoints (outputs/checkpoints/*.pth) are not tracked in Git (they’re listed in .gitignore).
-    You can regenerate datasets using the Blender + build scripts.
-
-    Pretrained HRNet weights are downloaded from OpenMMLab
-     and stored in outputs/checkpoints/.
-
-🚀 Workflow
-
-    Generate dataset (Windows / Git Bash + Blender)
-
-    Run dataset_pipeline/blender_export/*.py inside Blender to export frames, labels, skeleton.
-
-    Run dataset_pipeline/build_dataset/export_dataset.py to create coco_synth_68.json and dataset.csv.
-
-    Optionally, run dataset_pipeline/debug/sanity_check.py and viz_overlay_skeleton.py to validate dataset quality.
-
-    Train the model (WSL/Ubuntu)
-
-    Activate your environment.
-
-    Train HRNet on the horse dataset with MMPose:
-
-    mim train mmpose model_pipeline/configs/hrnet_w32_horse68_256x256.py
+---
+KinEquiMation/
+│
+├── animation_pipeline/         # Blender Python scripts for retargeting
+│   ├── build_apply_ml_rig.py       # Apply ML_rig (no constraints) from JSON
+│   ├── export_def_to_controller_mapping.py  # DEF → controller mapping for retargeting
+│   ├── export_skeleton_edges_from_rig.py    # Export skeleton edges for dataset building
+│   ├── ml_rig_builder.py          # Build ML_rig from DEF bones
+│   └── rokoko_retargerer.py       # Retarget ML_rig → rig using Rokoko
+│
+├── assets/                    # Static assets (rigs, models, etc.)
+│   └── horse_model_rigifyDEF_v1.blend
+│
+├── dataset_pipeline/          # Scripts for dataset generation
+│   ├── blender_export/            # Export per-frame metadata & renders from Blender
+│   ├── build_dataset/             # Convert metadata to COCO-style datasets
+│   └── data/                      # Final datasets and dataset exports
+│
+├── model_pipeline/            # Training & evaluation of ML models
+│   ├── checkpoints/               # Saved model weights
+│   ├── configs/                   # Training configs (pose/lifter)
+│   ├── datasets/                  # Dataset loaders for PyTorch
+│   ├── evaluation/                # Overlay, JSON/Blender export, visualization
+│   ├── models/                    # PyTorch model definitions (pose, lifter)
+│   └── training/                  # Training loops for pose & lifter models
+│
+├── outputs/                   # Experiment results and artifacts
+│   ├── animation_pipeline/        # Blender animation exports
+│   ├── hrnet_test_run/            # HRNet test outputs
+│   ├── lifter_preds/              # 3D lifter predictions (JSON, npy)
+│   ├── lifter_runs/               # Lifter training runs (logs, checkpoints)
+│   ├── overlays_hrnet/            # Visual overlays from 2D predictions
+│   └── overlays_lifter3d/         # Visual overlays from 3D lifter
+│
+├── venv/                     # Local Python virtual environment (ignored)
+│
+├── .gitignore
+├── README.md
+├── requirements.txt          # Dependencies for local environment
+└── requirements-wsl.txt      # Dependencies for WSL2/Docker environment
 
 
-    Checkpoints will be saved in outputs/checkpoints/.
 
-Evaluate & visualize
+## ⚙️ Tech Stack  
 
-    Run model_pipeline/evaluation/inference.py on images or video:
+### Blender Python API ✅  
+- Data generation  
+- Rigging support  
 
-      python model_pipeline/evaluation/inference.py \
-        --config model_pipeline/configs/hrnet_w32_horse68_256x256.py \
-        --checkpoint outputs/checkpoints/hrnet_w32_horse68_best.pth \
-        --image data/images/test_horse.png \
-        --out outputs/predictions/
+### PyTorch ✅  
+- Model training (pose + 3D lifter)  
 
+### MMPose ✅  
+- 2D keypoint detection  
 
-    Use viz_overlay_predictions.py to compare predicted vs ground truth keypoints on your dataset.
+### OpenCV ✅  
+- Video processing  
 
+### Rokoko (Blender) ✅  
+- Retargeting DEF → controllers  
 
-✅ This way:
+---
 
-      Windows/Git Bash = dataset generation (with Blender).
-  
-      WSL/Ubuntu = model training with CUDA.
-  
-      Outputs/ = the actual results you want to use or show (keypoints, overlays, trained weights).
+## 📊 MVP Goals ✅  
 
-``` 
+### Input  
+- Simple horse video (clear background)  
+
+### Output  
+- 3D keypoints → imported into Blender  
+
+### Retargeting  
+- Retargeting to rig via ML_rig + Rokoko  
+- Animation can be further adjusted directly on the retargeted rig  
+
+---
+
+## 🔮 Future Development ⏳  
+
+### Kinematic Constraints  
+- Bone length  
+- Joint limits  
+- Gait logic  
+
+### Motion Smoothing  
+- One-Euro filter  
+- Other filtering methods  
+
+### Fine-Tuning  
+- Train 2D model on annotated real frames  
+
+### Multi-Species Support  
+- Extend to other quadrupeds  
+
+### Real-Time Inference  
+- Live 2D → 3D from webcam  
+
+### Animator Tools  
+- Blender/Maya plugin for animation workflows  
+
+### Neural Motion Retargeting  
+- Replace heuristic IK rules with ML-based methods  
