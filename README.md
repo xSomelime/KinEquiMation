@@ -29,7 +29,7 @@ Projektet eliminerar behovet av dyr motion capture-utrustning genom att kombiner
 - Retargeting görs med **Rokoko**.  
 - Därefter kan animationen **justeras direkt på riggen** som retargetats till.  
 
----
+```
 KinEquiMation/
 │
 ├── animation_pipeline/         # Blender Python scripts for retargeting
@@ -69,7 +69,7 @@ KinEquiMation/
 ├── README.md
 ├── requirements.txt          # Dependencies for local environment
 └── requirements-wsl.txt      # Dependencies for WSL2/Docker environment
-
+```
 
 
 ## ⚙️ Tech Stack  
